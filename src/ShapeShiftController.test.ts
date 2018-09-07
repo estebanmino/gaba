@@ -1,84 +1,107 @@
-import { getOnce } from 'fetch-mock';
+import PreferencesController from './PreferencesController';
 import { stub } from 'sinon';
-import ShapeShiftController from './ShapeShiftController';
 
-const PENDING_TX = {
-	depositAddress: 'foo',
-	depositType: 'bar',
-	key: 'shapeshift',
-	response: undefined,
-	time: Date.now()
-};
-
-describe('ShapeShiftController', () => {
+describe('PreferencesController', () => {
 	it('should set default state', () => {
-		const controller = new ShapeShiftController();
-		expect(controller.state).toEqual({ shapeShiftTxList: [] });
-	});
-
-	it('should set default config', () => {
-		const controller = new ShapeShiftController();
-		expect(controller.config).toEqual({ interval: 3000 });
-	});
-
-	it('should poll on correct interval', () => {
-		const mock = stub(global, 'setInterval');
-		/* tslint:disable-next-line:no-unused-expression */
-		new ShapeShiftController({ interval: 1337 });
-		expect(mock.getCall(0).args[1]).toBe(1337);
-		mock.restore();
-	});
-
-	it('should update transaction list on interval', () => {
-		return new Promise((resolve) => {
-			const controller = new ShapeShiftController({ interval: 10 });
-			const mock = stub(controller, 'updateTransactionList');
-			setTimeout(() => {
-				expect(mock.called).toBe(true);
-				mock.restore();
-				resolve();
-			}, 20);
+		const controller = new PreferencesController();
+		expect(controller.state).toEqual({
+			collectibles: [],
+			featureFlags: {},
+			identities: {},
+			lostIdentities: {},
+			selectedAddress: '',
+			tokens: []
 		});
 	});
 
-	it('should not update infura rate if disabled', async () => {
-		const controller = new ShapeShiftController({ disabled: true }, { shapeShiftTxList: [PENDING_TX] });
-		controller.update = stub();
-		await controller.updateTransactionList();
-		expect((controller.update as any).called).toBe(false);
+	it('should add identities', () => {
+		const controller = new PreferencesController();
+		controller.addIdentities(['foo']);
+		controller.addIdentities(['foo']);
+		expect(controller.state.identities).toEqual({
+			['0xfoO']: {
+				address: '0xfoO',
+				name: 'Account 1'
+			}
+		});
 	});
 
-	it('should clear previous interval', () => {
-		const clearInterval = stub(global, 'clearInterval');
-		const controller = new ShapeShiftController({ interval: 1337 });
-		controller.interval = 1338;
-		expect(clearInterval.called).toBe(true);
-		clearInterval.restore();
+	it('should add token', () => {
+		const controller = new PreferencesController();
+		controller.addToken('foo', 'bar', 2);
+		expect(controller.state.tokens[0]).toEqual({
+			address: '0xfoO',
+			decimals: 2,
+			symbol: 'bar'
+		});
+		controller.addToken('foo', 'baz', 2);
+		expect(controller.state.tokens[0]).toEqual({
+			address: '0xfoO',
+			decimals: 2,
+			symbol: 'baz'
+		});
 	});
 
-	it('should update lists', async () => {
-		const controller = new ShapeShiftController(undefined, { shapeShiftTxList: [PENDING_TX] });
-		getOnce('begin:https://shapeshift.io', () => ({
-			body: JSON.stringify({ status: 'pending' })
-		}));
-		await controller.updateTransactionList();
-		getOnce(
-			'begin:https://shapeshift.io',
-			() => ({
-				body: JSON.stringify({ status: 'complete' })
-			}),
-			{ overwriteRoutes: true, method: 'GET' }
-		);
-		await controller.updateTransactionList();
-		expect(controller.state.shapeShiftTxList[0].response!.status).toBe('complete');
+	it('should add collectible', () => {
+		const controller = new PreferencesController();
+		stub(controller, 'requestNFTCustomInformation').returns({ name: 'name', image: 'url' });
+		controller.addCollectible('foo', 1234);
+		expect(controller.state.collectibles[0]).toEqual({
+			address: '0xfoO',
+			image: 'url',
+			name: 'name',
+			tokenId: 1234
+		});
 	});
 
-	it('should create transaction', () => {
-		const controller = new ShapeShiftController();
-		controller.createTransaction('foo', 'bar');
-		const tx = controller.state.shapeShiftTxList[0];
-		expect(tx.depositAddress).toBe('foo');
-		expect(tx.depositType).toBe('bar');
-		expect(tx.response).toBeUndefined();
+	it('should remove identity', () => {
+		const controller = new PreferencesController();
+		controller.addIdentities(['foo', 'bar', 'baz']);
+		controller.update({ selectedAddress: '0xfoO' });
+		controller.removeIdentity('foo');
+		controller.removeIdentity('baz');
+		controller.removeIdentity('foo');
+		expect(typeof controller.state.identities['0xfoO']).toBe('undefined');
+		expect(controller.state.selectedAddress).toBe('0xbar');
+	});
+
+	it('should remove token', () => {
+		const controller = new PreferencesController();
+		controller.addToken('foo', 'bar', 2);
+		controller.removeToken('foo');
+		expect(controller.state.tokens.length).toBe(0);
+	});
+
+	it('should set identity label', () => {
+		const controller = new PreferencesController();
+		controller.addIdentities(['foo']);
+		controller.setAccountLabel('foo', 'bar');
+		controller.setAccountLabel('baz', 'qux');
+		expect(controller.state.identities['0xfoO'].name).toBe('bar');
+		expect(controller.state.identities['0xBaZ'].name).toBe('qux');
+	});
+
+	it('should set identity label', () => {
+		const controller = new PreferencesController();
+		controller.addIdentities(['foo', 'bar']);
+		controller.syncIdentities(['foo', 'bar']);
+		expect(controller.state.identities).toEqual({
+			['0xbar']: { address: '0xbar', name: 'Account 2' },
+			['0xfoO']: { address: '0xfoO', name: 'Account 1' }
+		});
+		controller.syncIdentities(['foo']);
+		expect(controller.state.identities).toEqual({
+			['0xfoO']: { address: '0xfoO', name: 'Account 1' }
+		});
+		expect(controller.state.selectedAddress).toBe('0xfoO');
+	});
+
+	it('should update existing identities', () => {
+		const controller = new PreferencesController();
+		controller.updateIdentities(['foo', 'bar']);
+		expect(controller.state.identities).toEqual({
+			['0xbar']: { address: '0xbar', name: 'Account 2' },
+			['0xfoO']: { address: '0xfoO', name: 'Account 1' }
+		});
 	});
 });
